@@ -1,6 +1,7 @@
 import os
 import shutil
 import zipfile
+import platform
 from flask import Flask, request, jsonify, send_file
 from yt_dlp import YoutubeDL
 from flask_cors import CORS
@@ -79,11 +80,45 @@ def get_cookie_config():
         cookie_config['cookiefile'] = cookies_file
         return cookie_config
     
-    # Otherwise, try to use cookies from browser automatically
-    # Default to Chrome (most common browser)
-    # yt-dlp will automatically try to extract cookies from Chrome
-    # If Chrome is not available, yt-dlp will handle the error gracefully
-    cookie_config['cookiesfrombrowser'] = ('chrome',)
+    # Check if we're in a server/container environment (no GUI browsers)
+    # Skip browser cookie extraction in these cases
+    home_dir = os.path.expanduser('~')
+    
+    # Detect server/container environments
+    is_server_env = (
+        os.path.exists('/.dockerenv') or  # Docker container
+        os.environ.get('SERVER_SOFTWARE') or  # Some hosting environments
+        os.environ.get('DYNO') or  # Heroku
+        home_dir.startswith('/root') or  # Running as root (common in containers)
+        'CI' in os.environ  # CI/CD environments
+    )
+    
+    if is_server_env:
+        # In server environments, don't try browser cookies
+        # User should provide cookies file via YOUTUBE_COOKIES_FILE env var
+        return cookie_config
+    
+    # Try to detect available browsers and use their cookies
+    # Only try browser cookies on desktop/local environments
+    system = platform.system().lower()
+    
+    available_browsers = []
+    if system == 'windows':
+        # On Windows, try Chrome, Edge, Firefox
+        available_browsers = ['chrome', 'edge', 'firefox', 'opera', 'brave']
+    elif system == 'linux':
+        # On Linux, try Chromium, Chrome, Firefox
+        available_browsers = ['chromium', 'chrome', 'firefox', 'opera', 'brave']
+    elif system == 'darwin':  # macOS
+        # On macOS, try Chrome, Safari, Firefox
+        available_browsers = ['chrome', 'safari', 'firefox', 'opera', 'brave']
+    
+    # Try the first browser only (to avoid too many cookie extraction attempts)
+    # If it fails, yt-dlp will show an error, so we rely on error handling in the calling code
+    if available_browsers:
+        # Try just the first one - if it fails, the error will be caught
+        cookie_config['cookiesfrombrowser'] = (available_browsers[0],)
+    
     return cookie_config
 
 def progress_hook(d, status_key):
@@ -177,8 +212,25 @@ def download_media(url, format_choice, status_key, download_dir, format_id=None)
 
         os.makedirs(download_dir, exist_ok=True)
         
-        with YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        # Try download with cookies first, fallback to no cookies if cookie extraction fails
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+        except Exception as cookie_error:
+            error_str = str(cookie_error).lower()
+            # Check if error is related to cookie extraction
+            if 'cookie' in error_str or 'could not find' in error_str or 'chrome' in error_str or 'firefox' in error_str:
+                # Retry without cookies
+                ydl_opts_no_cookies = ydl_opts.copy()
+                # Remove cookie-related options
+                ydl_opts_no_cookies.pop('cookiefile', None)
+                ydl_opts_no_cookies.pop('cookiesfrombrowser', None)
+                
+                with YoutubeDL(ydl_opts_no_cookies) as ydl:
+                    ydl.download([url])
+            else:
+                # Not a cookie error, re-raise
+                raise
         
         download_status[status_key] = {'status': 'completed', 'progress': 100}
     except Exception as e:
@@ -1005,8 +1057,31 @@ def get_video_info():
             **cookie_config
         }
         
-        with YoutubeDL(ydl_opts_flat) as ydl_flat:
-            quick_info = ydl_flat.extract_info(url, download=False)
+        # Try with cookies first, fallback to no cookies if cookie extraction fails
+        try:
+            with YoutubeDL(ydl_opts_flat) as ydl_flat:
+                quick_info = ydl_flat.extract_info(url, download=False)
+        except Exception as cookie_error:
+            error_str = str(cookie_error).lower()
+            # Check if error is related to cookie extraction
+            if 'cookie' in error_str or 'could not find' in error_str or 'chrome' in error_str or 'firefox' in error_str:
+                # Retry without cookies
+                cookie_config = {}
+                ydl_opts_flat = {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'extract_flat': True,
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android', 'web']
+                        }
+                    }
+                }
+                with YoutubeDL(ydl_opts_flat) as ydl_flat:
+                    quick_info = ydl_flat.extract_info(url, download=False)
+            else:
+                # Not a cookie error, re-raise
+                raise
         
         # Check if it's a playlist
         if quick_info.get('_type') == 'playlist':
@@ -1032,9 +1107,31 @@ def get_video_info():
                             first_info = ydl.extract_info(first_url, download=False)
                             formats_source = first_info.get('formats', [])
                         except Exception as e:
-                            # If first video fails, return empty formats
-                            formats_source = []
-                            print(f"Error extracting first video info: {e}")
+                            error_str = str(e).lower()
+                            # Check if error is related to cookie extraction
+                            if 'cookie' in error_str or 'could not find' in error_str or 'chrome' in error_str or 'firefox' in error_str:
+                                # Retry without cookies
+                                ydl_opts_no_cookies = {
+                                    'quiet': True,
+                                    'no_warnings': True,
+                                    'extractor_args': {
+                                        'youtube': {
+                                            'player_client': ['android', 'web']
+                                        }
+                                    }
+                                }
+                                with YoutubeDL(ydl_opts_no_cookies) as ydl_retry:
+                                    try:
+                                        first_info = ydl_retry.extract_info(first_url, download=False)
+                                        formats_source = first_info.get('formats', [])
+                                    except Exception as retry_error:
+                                        # If retry also fails, return empty formats
+                                        formats_source = []
+                                        print(f"Error extracting first video info: {retry_error}")
+                            else:
+                                # If first video fails for other reasons, return empty formats
+                                formats_source = []
+                                print(f"Error extracting first video info: {e}")
                 else:
                     formats_source = []
             else:
@@ -1052,9 +1149,30 @@ def get_video_info():
                 },
                 **cookie_config
             }
-            with YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                formats_source = info.get('formats', [])
+            try:
+                with YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    formats_source = info.get('formats', [])
+            except Exception as cookie_error:
+                error_str = str(cookie_error).lower()
+                # Check if error is related to cookie extraction
+                if 'cookie' in error_str or 'could not find' in error_str or 'chrome' in error_str or 'firefox' in error_str:
+                    # Retry without cookies
+                    ydl_opts_no_cookies = {
+                        'quiet': True,
+                        'no_warnings': True,
+                        'extractor_args': {
+                            'youtube': {
+                                'player_client': ['android', 'web']
+                            }
+                        }
+                    }
+                    with YoutubeDL(ydl_opts_no_cookies) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                        formats_source = info.get('formats', [])
+                else:
+                    # Not a cookie error, re-raise
+                    raise
         
         # Process formats (same for both playlist and single video)
         formats = []
