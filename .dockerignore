@@ -1,0 +1,12 @@
+Downloads/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git
+.gitignore
+README.md
+node_modules
+.vscode
+.idea
+

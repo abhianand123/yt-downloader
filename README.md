@@ -1,5 +1,3 @@
-# yt-downloader
-It can download from yt as well as yt-music. Different formats supported. Playlist also supported
 # YouTube & YouTube Music Downloader
 
 A beautiful glassmorphism web application to download YouTube videos and audio files.
