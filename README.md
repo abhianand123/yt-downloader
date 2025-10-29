@@ -46,35 +46,41 @@ http://localhost:5000
 
 ## Cookie Configuration (Bot Detection Bypass)
 
-YouTube may sometimes require authentication to prevent bot detection. The application automatically tries to use cookies from your Chrome browser. If you encounter authentication errors, you can:
+YouTube requires cookies to prevent bot detection, especially when hosted on cloud platforms. The app automatically tries to use browser cookies locally, but **you MUST configure cookies when deploying to Railway or other cloud platforms**.
 
-### Option 1: Use Browser Cookies Automatically
-The app will automatically try to use cookies from Chrome if available. Make sure you're logged into YouTube in your Chrome browser.
+### For Local Development
 
-### Option 2: Export Cookies Manually
-If automatic browser cookie detection doesn't work (e.g., on servers), you can export cookies manually:
+**Option 1: Automatic Browser Cookies**
+The app automatically tries to use cookies from Chrome if available. Make sure you're logged into YouTube in your browser.
 
-1. Install a browser extension like "Get cookies.txt LOCALLY" or use yt-dlp's cookie export:
-```bash
-yt-dlp --cookies-from-browser chrome --cookies cookies.txt "https://www.youtube.com"
-```
+**Option 2: Manual Cookie File**
+Export cookies and set the environment variable:
 
-2. Save the exported cookies to a file (e.g., `cookies.txt`)
-
-3. Set the environment variable before running the app:
+1. Install browser extension: ["Get cookies.txt LOCALLY"](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
+2. Go to YouTube and export cookies as `cookies.txt`
+3. Set environment variable:
 ```bash
 # Windows PowerShell
-$env:YOUTUBE_COOKIES_FILE="C:\path\to\cookies.txt"
-python app.py
-
-# Windows CMD
-set YOUTUBE_COOKIES_FILE=C:\path\to\cookies.txt
+$env:YOUTUBE_COOKIES_TEXT=(Get-Content cookies.txt -Raw)
 python app.py
 
 # Linux/Mac
-export YOUTUBE_COOKIES_FILE="/path/to/cookies.txt"
+export YOUTUBE_COOKIES_TEXT="$(cat cookies.txt)"
 python app.py
 ```
+
+### For Railway/Cloud Deployment (REQUIRED)
+
+**⚠️ IMPORTANT:** Railway runs in containers without browser access. Cookies are **REQUIRED**.
+
+1. Export cookies using "Get cookies.txt LOCALLY" browser extension
+2. Copy the ENTIRE contents of `cookies.txt`
+3. In Railway Dashboard → Variables → Add Variable:
+   - Name: `YOUTUBE_COOKIES_TEXT`
+   - Value: Paste the entire cookie file content
+4. Railway will auto-redeploy
+
+📖 **Full Railway deployment guide**: See `DEPLOYMENT_GUIDE.md`
 
 For more information, see: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp
 

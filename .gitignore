@@ -1,5 +1,6 @@
 # Downloaded files
 Downloads/
+.cookies/
 
 # Python
 __pycache__/

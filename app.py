@@ -74,7 +74,24 @@ def get_cookie_config():
     """Get cookie configuration for yt-dlp to bypass bot detection."""
     cookie_config = {}
     
-    # First, try to use cookies file if provided via environment variable
+    # First, try to use cookies from YOUTUBE_COOKIES_TEXT (for Railway/cloud hosting)
+    # This allows you to paste cookie file contents directly as an environment variable
+    cookies_text = os.environ.get('YOUTUBE_COOKIES_TEXT')
+    if cookies_text:
+        # Create a temporary cookies file
+        cookies_dir = os.path.join(os.path.dirname(__file__), '.cookies')
+        os.makedirs(cookies_dir, exist_ok=True)
+        temp_cookies_file = os.path.join(cookies_dir, 'cookies.txt')
+        
+        try:
+            with open(temp_cookies_file, 'w', encoding='utf-8') as f:
+                f.write(cookies_text)
+            cookie_config['cookiefile'] = temp_cookies_file
+            return cookie_config
+        except Exception as e:
+            print(f"Error writing cookies file: {e}")
+    
+    # Second, try to use cookies file if provided via environment variable (file path)
     cookies_file = os.environ.get('YOUTUBE_COOKIES_FILE')
     if cookies_file and os.path.exists(cookies_file):
         cookie_config['cookiefile'] = cookies_file
