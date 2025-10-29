@@ -137,14 +137,14 @@ def download_media(url, format_choice, status_key, download_dir, format_id=None)
             })
         else:  # MP4
             if format_id:
-                # Always merge audio to ensure video has sound
+                # Use the selected format and merge with best audio
                 ydl_opts.update({
-                    'format': f'{format_id}+bestaudio[ext=m4a]/bestaudio/best',
+                    'format': f'{format_id}+bestaudio',
                     'merge_output_format': 'mp4',
                 })
             else:
                 ydl_opts.update({
-                    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+                    'format': 'bestvideo+bestaudio/best',
                     'merge_output_format': 'mp4',
                 })
 
@@ -980,13 +980,15 @@ def get_video_info():
                     format_id = f.get('format_id')
                     filesize = f.get('filesize', 0)
                     
+                    # Skip video-only formats
+                    if vcodec != 'none' and acodec == 'none':
+                        continue
+                    
                     quality_label = ''
                     if height:
                         quality_label = f"{height}p"
                     elif vcodec == 'none' and acodec != 'none':
                         quality_label = "Audio only"
-                    elif acodec == 'none':
-                        quality_label = "Video only (no audio)"
                     else:
                         quality_label = "Unknown"
                     
