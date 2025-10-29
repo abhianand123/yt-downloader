@@ -69,6 +69,23 @@ def convert_music_url_to_youtube(url):
         return converted_url
     return url
 
+def get_cookie_config():
+    """Get cookie configuration for yt-dlp to bypass bot detection."""
+    cookie_config = {}
+    
+    # First, try to use cookies file if provided via environment variable
+    cookies_file = os.environ.get('YOUTUBE_COOKIES_FILE')
+    if cookies_file and os.path.exists(cookies_file):
+        cookie_config['cookiefile'] = cookies_file
+        return cookie_config
+    
+    # Otherwise, try to use cookies from browser automatically
+    # Default to Chrome (most common browser)
+    # yt-dlp will automatically try to extract cookies from Chrome
+    # If Chrome is not available, yt-dlp will handle the error gracefully
+    cookie_config['cookiesfrombrowser'] = ('chrome',)
+    return cookie_config
+
 def progress_hook(d, status_key):
     """Hook to track download progress."""
     if d['status'] == 'downloading':
@@ -122,6 +139,9 @@ def download_media(url, format_choice, status_key, download_dir, format_id=None)
                 }
             },
         }
+        
+        # Add cookie support to bypass bot detection
+        ydl_opts.update(get_cookie_config())
 
         # Create custom progress hook with proper threading
         def hook(d):
@@ -969,6 +989,9 @@ def get_video_info():
     url = convert_music_url_to_youtube(url)
     
     try:
+        # Cookie support configuration
+        cookie_config = get_cookie_config()
+        
         # First check if it's a playlist (use flat extraction for speed)
         ydl_opts_flat = {
             'quiet': True,
@@ -979,6 +1002,7 @@ def get_video_info():
                     'player_client': ['android', 'web']
                 }
             },
+            **cookie_config
         }
         
         with YoutubeDL(ydl_opts_flat) as ydl_flat:
@@ -1001,6 +1025,7 @@ def get_video_info():
                                 'player_client': ['android', 'web']
                             }
                         },
+                        **cookie_config
                     }
                     with YoutubeDL(ydl_opts) as ydl:
                         try:
@@ -1025,6 +1050,7 @@ def get_video_info():
                         'player_client': ['android', 'web']
                     }
                 },
+                **cookie_config
             }
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
