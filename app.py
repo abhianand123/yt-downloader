@@ -137,35 +137,11 @@ def download_media(url, format_choice, status_key, download_dir, format_id=None)
             })
         else:  # MP4
             if format_id:
-                # Get format info to check if it has audio
-                temp_ydl = YoutubeDL({'quiet': True})
-                info = temp_ydl.extract_info(url, download=False)
-                formats = info.get('formats', [])
-                selected_format = next((f for f in formats if f.get('format_id') == format_id), None)
-                
-                if selected_format:
-                    # Check if format has video and audio
-                    has_video = selected_format.get('vcodec') != 'none'
-                    has_audio = selected_format.get('acodec') != 'none'
-                    
-                    if has_video and not has_audio:
-                        # Video only, need to merge audio - prefer AAC
-                        ydl_opts.update({
-                            'format': f'{format_id}+bestaudio[ext=m4a]/bestaudio/best',
-                            'merge_output_format': 'mp4',
-                        })
-                    else:
-                        # Has both or audio only
-                        ydl_opts.update({
-                            'format': format_id,
-                            'merge_output_format': 'mp4',
-                        })
-                else:
-                    # Fallback to best
-                    ydl_opts.update({
-                        'format': 'best',
-                        'merge_output_format': 'mp4',
-                    })
+                # Always merge audio to ensure video has sound
+                ydl_opts.update({
+                    'format': f'{format_id}+bestaudio[ext=m4a]/bestaudio/best',
+                    'merge_output_format': 'mp4',
+                })
             else:
                 ydl_opts.update({
                     'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
