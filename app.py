@@ -963,52 +963,100 @@ def get_video_info():
     url = convert_music_url_to_youtube(url)
     
     try:
-        ydl_opts = {
+        # First check if it's a playlist (use flat extraction for speed)
+        ydl_opts_flat = {
             'quiet': True,
             'no_warnings': True,
+            'extract_flat': True,
         }
         
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            formats = []
-            for f in info.get('formats', []):
-                if f.get('vcodec') != 'none' or f.get('acodec') != 'none':
-                    height = f.get('height')
-                    vcodec = f.get('vcodec')
-                    acodec = f.get('acodec')
-                    ext = f.get('ext', 'unknown')
-                    format_id = f.get('format_id')
-                    filesize = f.get('filesize', 0)
-                    
-                    # Skip video-only formats
-                    if vcodec != 'none' and acodec == 'none':
-                        continue
-                    
-                    quality_label = ''
-                    if height:
-                        quality_label = f"{height}p"
-                    elif vcodec == 'none' and acodec != 'none':
-                        quality_label = "Audio only"
-                    else:
-                        quality_label = "Unknown"
-                    
-                    formats.append({
-                        'format_id': format_id,
-                        'quality': quality_label,
-                        'ext': ext,
-                        'vcodec': vcodec,
-                        'acodec': acodec,
-                        'filesize': filesize
-                    })
-            
-            return jsonify({
-                'title': info.get('title', 'Unknown'),
-                'thumbnail': info.get('thumbnail', ''),
-                'formats': formats
-            })
+        with YoutubeDL(ydl_opts_flat) as ydl_flat:
+            quick_info = ydl_flat.extract_info(url, download=False)
+        
+        # Check if it's a playlist
+        if quick_info.get('_type') == 'playlist':
+            # For playlists, get formats from first video only (much faster)
+            entries = quick_info.get('entries', [])
+            if entries and len(entries) > 0:
+                first_video_id = entries[0].get('id')
+                if first_video_id:
+                    first_url = f"https://www.youtube.com/watch?v={first_video_id}"
+                    # Extract detailed info only for first video
+                    ydl_opts = {
+                        'quiet': True,
+                        'no_warnings': True,
+                    }
+                    with YoutubeDL(ydl_opts) as ydl:
+                        try:
+                            first_info = ydl.extract_info(first_url, download=False)
+                            formats_source = first_info.get('formats', [])
+                        except Exception as e:
+                            # If first video fails, return empty formats
+                            formats_source = []
+                            print(f"Error extracting first video info: {e}")
+                else:
+                    formats_source = []
+            else:
+                formats_source = []
+            info = quick_info  # Use quick_info for playlist title/thumbnail
+        else:
+            # Single video - extract all formats normally
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+            }
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                formats_source = info.get('formats', [])
+        
+        # Process formats (same for both playlist and single video)
+        formats = []
+        for f in formats_source:
+            if f.get('vcodec') != 'none' or f.get('acodec') != 'none':
+                height = f.get('height')
+                vcodec = f.get('vcodec')
+                acodec = f.get('acodec')
+                ext = f.get('ext', 'unknown')
+                format_id = f.get('format_id')
+                filesize = f.get('filesize', 0)
+                
+                # Skip video-only formats
+                if vcodec != 'none' and acodec == 'none':
+                    continue
+                
+                quality_label = ''
+                if height:
+                    quality_label = f"{height}p"
+                elif vcodec == 'none' and acodec != 'none':
+                    quality_label = "Audio only"
+                else:
+                    quality_label = "Unknown"
+                
+                formats.append({
+                    'format_id': format_id,
+                    'quality': quality_label,
+                    'ext': ext,
+                    'vcodec': vcodec,
+                    'acodec': acodec,
+                    'filesize': filesize
+                })
+        
+        # Determine if it's a playlist
+        is_playlist = quick_info.get('_type') == 'playlist'
+        playlist_count = len(quick_info.get('entries', [])) if is_playlist else 1
+        
+        return jsonify({
+            'title': info.get('title', 'Unknown'),
+            'thumbnail': info.get('thumbnail', ''),
+            'formats': formats,
+            'is_playlist': is_playlist,
+            'playlist_count': playlist_count
+        })
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        error_msg = str(e)
+        if 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower():
+            return jsonify({'error': 'Request timed out. The playlist may be too large. Please try downloading directly without fetching formats.'}), 408
+        return jsonify({'error': f'Error fetching video info: {error_msg}'}), 400
 
 @app.route('/api/download', methods=['POST'])
 def download():
