@@ -1,8 +1,6 @@
 import os
 import shutil
 import zipfile
-import platform
-import base64
 from flask import Flask, request, jsonify, send_file
 from yt_dlp import YoutubeDL
 from flask_cors import CORS
@@ -71,88 +69,6 @@ def convert_music_url_to_youtube(url):
         return converted_url
     return url
 
-def get_cookie_config():
-    """Get cookie configuration for yt-dlp to bypass bot detection."""
-    cookie_config = {}
-    
-    # First, try to use cookies from YOUTUBE_COOKIES_TEXT (base64 encoded - for Railway/cloud hosting)
-    # Railway has 32KB limit, so we support base64 encoding to reduce size
-    cookies_text_base64 = os.environ.get('YOUTUBE_COOKIES_BASE64')
-    if cookies_text_base64 and cookies_text_base64.strip():
-        try:
-            # Decode base64
-            cookies_text = base64.b64decode(cookies_text_base64).decode('utf-8')
-            # Create a temporary cookies file
-            cookies_dir = os.path.join(os.path.dirname(__file__), '.cookies')
-            os.makedirs(cookies_dir, exist_ok=True)
-            temp_cookies_file = os.path.join(cookies_dir, 'cookies.txt')
-            
-            with open(temp_cookies_file, 'w', encoding='utf-8') as f:
-                f.write(cookies_text.strip())
-            
-            if os.path.exists(temp_cookies_file) and os.path.getsize(temp_cookies_file) > 0:
-                cookie_config['cookiefile'] = temp_cookies_file
-                print(f"✅ Using cookies from YOUTUBE_COOKIES_BASE64 ({os.path.getsize(temp_cookies_file)} bytes)")
-                return cookie_config
-        except Exception as e:
-            print(f"❌ Error decoding base64 cookies: {e}")
-    
-    # Try plain text cookies (for smaller cookie files or local development)
-    cookies_text = os.environ.get('YOUTUBE_COOKIES_TEXT')
-    if cookies_text and cookies_text.strip():
-        # Create a temporary cookies file
-        cookies_dir = os.path.join(os.path.dirname(__file__), '.cookies')
-        os.makedirs(cookies_dir, exist_ok=True)
-        temp_cookies_file = os.path.join(cookies_dir, 'cookies.txt')
-        
-        try:
-            with open(temp_cookies_file, 'w', encoding='utf-8') as f:
-                f.write(cookies_text.strip())
-            # Verify the file was created and is readable
-            if os.path.exists(temp_cookies_file) and os.path.getsize(temp_cookies_file) > 0:
-                cookie_config['cookiefile'] = temp_cookies_file
-                print(f"✅ Using cookies from YOUTUBE_COOKIES_TEXT ({os.path.getsize(temp_cookies_file)} bytes)")
-                return cookie_config
-            else:
-                print("⚠️ Warning: Cookies file was not created properly")
-        except Exception as e:
-            print(f"❌ Error writing cookies file: {e}")
-    
-    # Second, try to use cookies file if provided via environment variable (file path)
-    cookies_file = os.environ.get('YOUTUBE_COOKIES_FILE')
-    if cookies_file and os.path.exists(cookies_file):
-        cookie_config['cookiefile'] = cookies_file
-        print(f"✅ Using cookies from file: {cookies_file}")
-        return cookie_config
-    
-    # Check if we're in a server/container environment (no GUI browsers)
-    # Skip browser cookie extraction in these cases
-    home_dir = os.path.expanduser('~')
-    
-    # Detect server/container environments (including Railway)
-    is_server_env = (
-        os.path.exists('/.dockerenv') or  # Docker container
-        os.environ.get('SERVER_SOFTWARE') or  # Some hosting environments
-        os.environ.get('DYNO') or  # Heroku
-        os.environ.get('RAILWAY_ENVIRONMENT') or  # Railway
-        os.environ.get('RAILWAY_PROJECT_ID') or  # Railway
-        home_dir.startswith('/root') or  # Running as root (common in containers)
-        'CI' in os.environ  # CI/CD environments
-    )
-    
-    if is_server_env:
-        # In server environments, don't try browser cookies
-        # Cookies are optional - app will work without them for most videos
-        # Only log if cookies are available
-        if cookies_text or cookies_file:
-            print("ℹ️ Server environment detected - using provided cookies if available")
-        return cookie_config
-    
-    # Don't automatically try browser cookies - they often cause errors
-    # Cookies are optional - app will work without them for most videos
-    # Users can explicitly provide cookies via environment variables if needed
-    return cookie_config
-
 def progress_hook(d, status_key):
     """Hook to track download progress."""
     if d['status'] == 'downloading':
@@ -206,9 +122,6 @@ def download_media(url, format_choice, status_key, download_dir, format_id=None)
                 }
             },
         }
-        
-        # Add cookie support to bypass bot detection
-        ydl_opts.update(get_cookie_config())
 
         # Create custom progress hook with proper threading
         def hook(d):
@@ -244,25 +157,8 @@ def download_media(url, format_choice, status_key, download_dir, format_id=None)
 
         os.makedirs(download_dir, exist_ok=True)
         
-        # Try download with cookies first, fallback to no cookies if cookie extraction fails
-        try:
-            with YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-        except Exception as cookie_error:
-            error_str = str(cookie_error).lower()
-            # Check if error is related to cookie extraction
-            if 'cookie' in error_str or 'could not find' in error_str or 'chrome' in error_str or 'firefox' in error_str:
-                # Retry without cookies
-                ydl_opts_no_cookies = ydl_opts.copy()
-                # Remove cookie-related options
-                ydl_opts_no_cookies.pop('cookiefile', None)
-                ydl_opts_no_cookies.pop('cookiesfrombrowser', None)
-                
-                with YoutubeDL(ydl_opts_no_cookies) as ydl:
-                    ydl.download([url])
-            else:
-                # Not a cookie error, re-raise
-                raise
+        with YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
         
         download_status[status_key] = {'status': 'completed', 'progress': 100}
     except Exception as e:
@@ -1073,9 +969,6 @@ def get_video_info():
     url = convert_music_url_to_youtube(url)
     
     try:
-        # Cookie support configuration
-        cookie_config = get_cookie_config()
-        
         # First check if it's a playlist (use flat extraction for speed)
         ydl_opts_flat = {
             'quiet': True,
@@ -1086,34 +979,10 @@ def get_video_info():
                     'player_client': ['android', 'web']
                 }
             },
-            **cookie_config
         }
         
-        # Try with cookies first, fallback to no cookies if cookie extraction fails
-        try:
-            with YoutubeDL(ydl_opts_flat) as ydl_flat:
-                quick_info = ydl_flat.extract_info(url, download=False)
-        except Exception as cookie_error:
-            error_str = str(cookie_error).lower()
-            # Check if error is related to cookie extraction
-            if 'cookie' in error_str or 'could not find' in error_str or 'chrome' in error_str or 'firefox' in error_str:
-                # Retry without cookies
-                cookie_config = {}
-                ydl_opts_flat = {
-                    'quiet': True,
-                    'no_warnings': True,
-                    'extract_flat': True,
-                    'extractor_args': {
-                        'youtube': {
-                            'player_client': ['android', 'web']
-                        }
-                    }
-                }
-                with YoutubeDL(ydl_opts_flat) as ydl_flat:
-                    quick_info = ydl_flat.extract_info(url, download=False)
-            else:
-                # Not a cookie error, re-raise
-                raise
+        with YoutubeDL(ydl_opts_flat) as ydl_flat:
+            quick_info = ydl_flat.extract_info(url, download=False)
         
         # Check if it's a playlist
         if quick_info.get('_type') == 'playlist':
@@ -1132,38 +1001,15 @@ def get_video_info():
                                 'player_client': ['android', 'web']
                             }
                         },
-                        **cookie_config
                     }
                     with YoutubeDL(ydl_opts) as ydl:
                         try:
                             first_info = ydl.extract_info(first_url, download=False)
                             formats_source = first_info.get('formats', [])
                         except Exception as e:
-                            error_str = str(e).lower()
-                            # Check if error is related to cookie extraction
-                            if 'cookie' in error_str or 'could not find' in error_str or 'chrome' in error_str or 'firefox' in error_str:
-                                # Retry without cookies
-                                ydl_opts_no_cookies = {
-                                    'quiet': True,
-                                    'no_warnings': True,
-                                    'extractor_args': {
-                                        'youtube': {
-                                            'player_client': ['android', 'web']
-                                        }
-                                    }
-                                }
-                                with YoutubeDL(ydl_opts_no_cookies) as ydl_retry:
-                                    try:
-                                        first_info = ydl_retry.extract_info(first_url, download=False)
-                                        formats_source = first_info.get('formats', [])
-                                    except Exception as retry_error:
-                                        # If retry also fails, return empty formats
-                                        formats_source = []
-                                        print(f"Error extracting first video info: {retry_error}")
-                            else:
-                                # If first video fails for other reasons, return empty formats
-                                formats_source = []
-                                print(f"Error extracting first video info: {e}")
+                            # If first video fails, return empty formats
+                            formats_source = []
+                            print(f"Error extracting first video info: {e}")
                 else:
                     formats_source = []
             else:
@@ -1179,32 +1025,10 @@ def get_video_info():
                         'player_client': ['android', 'web']
                     }
                 },
-                **cookie_config
             }
-            try:
-                with YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    formats_source = info.get('formats', [])
-            except Exception as cookie_error:
-                error_str = str(cookie_error).lower()
-                # Check if error is related to cookie extraction
-                if 'cookie' in error_str or 'could not find' in error_str or 'chrome' in error_str or 'firefox' in error_str:
-                    # Retry without cookies
-                    ydl_opts_no_cookies = {
-                        'quiet': True,
-                        'no_warnings': True,
-                        'extractor_args': {
-                            'youtube': {
-                                'player_client': ['android', 'web']
-                            }
-                        }
-                    }
-                    with YoutubeDL(ydl_opts_no_cookies) as ydl:
-                        info = ydl.extract_info(url, download=False)
-                        formats_source = info.get('formats', [])
-                else:
-                    # Not a cookie error, re-raise
-                    raise
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                formats_source = info.get('formats', [])
         
         # Process formats (same for both playlist and single video)
         formats = []
@@ -1256,35 +1080,6 @@ def get_video_info():
         })
     except Exception as e:
         error_msg = str(e)
-        
-        # Check for bot detection / cookie errors - only show help if YouTube explicitly blocks
-        if 'sign in to confirm' in error_msg.lower() and 'bot' in error_msg.lower():
-            # Only show cookie help if it's a bot detection error
-            # Check if we're in a server environment
-            is_server = (
-                os.environ.get('RAILWAY_ENVIRONMENT') or 
-                os.environ.get('RAILWAY_PROJECT_ID') or
-                os.path.exists('/.dockerenv') or
-                os.environ.get('DYNO')
-            )
-            
-            if is_server:
-                help_msg = (
-                    "⚠️ YouTube requires cookies for this video.\n\n"
-                    "Optional: To enable cookies in Railway:\n"
-                    "Method 1 (Private Repo): Commit cookies.txt and set YOUTUBE_COOKIES_FILE=/app/cookies.txt\n"
-                    "Method 2 (Any Repo): Set YOUTUBE_COOKIES_BASE64 with base64-encoded cookies\n\n"
-                    "See COOKIE_SETUP_GUIDE.md for detailed instructions."
-                )
-                return jsonify({'error': help_msg}), 400
-            else:
-                help_msg = (
-                    "⚠️ YouTube requires cookies for this video.\n\n"
-                    "Optional: Set YOUTUBE_COOKIES_TEXT or YOUTUBE_COOKIES_FILE environment variable.\n"
-                    "See README.md for instructions."
-                )
-                return jsonify({'error': help_msg}), 400
-        
         if 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower():
             return jsonify({'error': 'Request timed out. The playlist may be too large. Please try downloading directly without fetching formats.'}), 408
         return jsonify({'error': f'Error fetching video info: {error_msg}'}), 400
