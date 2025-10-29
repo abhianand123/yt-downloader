@@ -2,6 +2,7 @@ import os
 import shutil
 import zipfile
 import platform
+import base64
 from flask import Flask, request, jsonify, send_file
 from yt_dlp import YoutubeDL
 from flask_cors import CORS
@@ -74,8 +75,29 @@ def get_cookie_config():
     """Get cookie configuration for yt-dlp to bypass bot detection."""
     cookie_config = {}
     
-    # First, try to use cookies from YOUTUBE_COOKIES_TEXT (for Railway/cloud hosting)
-    # This allows you to paste cookie file contents directly as an environment variable
+    # First, try to use cookies from YOUTUBE_COOKIES_TEXT (base64 encoded - for Railway/cloud hosting)
+    # Railway has 32KB limit, so we support base64 encoding to reduce size
+    cookies_text_base64 = os.environ.get('YOUTUBE_COOKIES_BASE64')
+    if cookies_text_base64 and cookies_text_base64.strip():
+        try:
+            # Decode base64
+            cookies_text = base64.b64decode(cookies_text_base64).decode('utf-8')
+            # Create a temporary cookies file
+            cookies_dir = os.path.join(os.path.dirname(__file__), '.cookies')
+            os.makedirs(cookies_dir, exist_ok=True)
+            temp_cookies_file = os.path.join(cookies_dir, 'cookies.txt')
+            
+            with open(temp_cookies_file, 'w', encoding='utf-8') as f:
+                f.write(cookies_text.strip())
+            
+            if os.path.exists(temp_cookies_file) and os.path.getsize(temp_cookies_file) > 0:
+                cookie_config['cookiefile'] = temp_cookies_file
+                print(f"✅ Using cookies from YOUTUBE_COOKIES_BASE64 ({os.path.getsize(temp_cookies_file)} bytes)")
+                return cookie_config
+        except Exception as e:
+            print(f"❌ Error decoding base64 cookies: {e}")
+    
+    # Try plain text cookies (for smaller cookie files or local development)
     cookies_text = os.environ.get('YOUTUBE_COOKIES_TEXT')
     if cookies_text and cookies_text.strip():
         # Create a temporary cookies file
@@ -120,33 +142,15 @@ def get_cookie_config():
     
     if is_server_env:
         # In server environments, don't try browser cookies
-        # Warn user that cookies are required
-        if not cookies_text and not cookies_file:
-            print("⚠️ WARNING: Running in server environment without cookies!")
-            print("⚠️ YouTube will block requests. Please set YOUTUBE_COOKIES_TEXT environment variable.")
+        # Cookies are optional - app will work without them for most videos
+        # Only log if cookies are available
+        if cookies_text or cookies_file:
+            print("ℹ️ Server environment detected - using provided cookies if available")
         return cookie_config
     
-    # Try to detect available browsers and use their cookies
-    # Only try browser cookies on desktop/local environments
-    system = platform.system().lower()
-    
-    available_browsers = []
-    if system == 'windows':
-        # On Windows, try Chrome, Edge, Firefox
-        available_browsers = ['chrome', 'edge', 'firefox', 'opera', 'brave']
-    elif system == 'linux':
-        # On Linux, try Chromium, Chrome, Firefox
-        available_browsers = ['chromium', 'chrome', 'firefox', 'opera', 'brave']
-    elif system == 'darwin':  # macOS
-        # On macOS, try Chrome, Safari, Firefox
-        available_browsers = ['chrome', 'safari', 'firefox', 'opera', 'brave']
-    
-    # Try the first browser only (to avoid too many cookie extraction attempts)
-    # If it fails, yt-dlp will show an error, so we rely on error handling in the calling code
-    if available_browsers:
-        # Try just the first one - if it fails, the error will be caught
-        cookie_config['cookiesfrombrowser'] = (available_browsers[0],)
-    
+    # Don't automatically try browser cookies - they often cause errors
+    # Cookies are optional - app will work without them for most videos
+    # Users can explicitly provide cookies via environment variables if needed
     return cookie_config
 
 def progress_hook(d, status_key):
@@ -1253,8 +1257,9 @@ def get_video_info():
     except Exception as e:
         error_msg = str(e)
         
-        # Check for bot detection / cookie errors
-        if 'sign in to confirm' in error_msg.lower() or 'you\'re not a bot' in error_msg.lower() or 'cookie' in error_msg.lower():
+        # Check for bot detection / cookie errors - only show help if YouTube explicitly blocks
+        if 'sign in to confirm' in error_msg.lower() and 'bot' in error_msg.lower():
+            # Only show cookie help if it's a bot detection error
             # Check if we're in a server environment
             is_server = (
                 os.environ.get('RAILWAY_ENVIRONMENT') or 
@@ -1265,20 +1270,17 @@ def get_video_info():
             
             if is_server:
                 help_msg = (
-                    "⚠️ YouTube requires cookies to prevent bot detection.\n\n"
-                    "To fix this in Railway:\n"
-                    "1. Export cookies using 'Get cookies.txt LOCALLY' browser extension\n"
-                    "2. In Railway Dashboard → Variables → Add Variable:\n"
-                    "   - Name: YOUTUBE_COOKIES_TEXT\n"
-                    "   - Value: Paste entire contents of cookies.txt\n"
-                    "3. Railway will auto-redeploy\n\n"
-                    "See DEPLOYMENT_GUIDE.md for detailed instructions."
+                    "⚠️ YouTube requires cookies for this video.\n\n"
+                    "Optional: To enable cookies in Railway:\n"
+                    "Method 1 (Private Repo): Commit cookies.txt and set YOUTUBE_COOKIES_FILE=/app/cookies.txt\n"
+                    "Method 2 (Any Repo): Set YOUTUBE_COOKIES_BASE64 with base64-encoded cookies\n\n"
+                    "See COOKIE_SETUP_GUIDE.md for detailed instructions."
                 )
                 return jsonify({'error': help_msg}), 400
             else:
                 help_msg = (
-                    "⚠️ YouTube requires cookies. The app tried to use browser cookies but it didn't work.\n\n"
-                    "Try setting YOUTUBE_COOKIES_TEXT environment variable with exported cookies.\n"
+                    "⚠️ YouTube requires cookies for this video.\n\n"
+                    "Optional: Set YOUTUBE_COOKIES_TEXT or YOUTUBE_COOKIES_FILE environment variable.\n"
                     "See README.md for instructions."
                 )
                 return jsonify({'error': help_msg}), 400
