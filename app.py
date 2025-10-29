@@ -77,7 +77,7 @@ def get_cookie_config():
     # First, try to use cookies from YOUTUBE_COOKIES_TEXT (for Railway/cloud hosting)
     # This allows you to paste cookie file contents directly as an environment variable
     cookies_text = os.environ.get('YOUTUBE_COOKIES_TEXT')
-    if cookies_text:
+    if cookies_text and cookies_text.strip():
         # Create a temporary cookies file
         cookies_dir = os.path.join(os.path.dirname(__file__), '.cookies')
         os.makedirs(cookies_dir, exist_ok=True)
@@ -85,34 +85,45 @@ def get_cookie_config():
         
         try:
             with open(temp_cookies_file, 'w', encoding='utf-8') as f:
-                f.write(cookies_text)
-            cookie_config['cookiefile'] = temp_cookies_file
-            return cookie_config
+                f.write(cookies_text.strip())
+            # Verify the file was created and is readable
+            if os.path.exists(temp_cookies_file) and os.path.getsize(temp_cookies_file) > 0:
+                cookie_config['cookiefile'] = temp_cookies_file
+                print(f"✅ Using cookies from YOUTUBE_COOKIES_TEXT ({os.path.getsize(temp_cookies_file)} bytes)")
+                return cookie_config
+            else:
+                print("⚠️ Warning: Cookies file was not created properly")
         except Exception as e:
-            print(f"Error writing cookies file: {e}")
+            print(f"❌ Error writing cookies file: {e}")
     
     # Second, try to use cookies file if provided via environment variable (file path)
     cookies_file = os.environ.get('YOUTUBE_COOKIES_FILE')
     if cookies_file and os.path.exists(cookies_file):
         cookie_config['cookiefile'] = cookies_file
+        print(f"✅ Using cookies from file: {cookies_file}")
         return cookie_config
     
     # Check if we're in a server/container environment (no GUI browsers)
     # Skip browser cookie extraction in these cases
     home_dir = os.path.expanduser('~')
     
-    # Detect server/container environments
+    # Detect server/container environments (including Railway)
     is_server_env = (
         os.path.exists('/.dockerenv') or  # Docker container
         os.environ.get('SERVER_SOFTWARE') or  # Some hosting environments
         os.environ.get('DYNO') or  # Heroku
+        os.environ.get('RAILWAY_ENVIRONMENT') or  # Railway
+        os.environ.get('RAILWAY_PROJECT_ID') or  # Railway
         home_dir.startswith('/root') or  # Running as root (common in containers)
         'CI' in os.environ  # CI/CD environments
     )
     
     if is_server_env:
         # In server environments, don't try browser cookies
-        # User should provide cookies file via YOUTUBE_COOKIES_FILE env var
+        # Warn user that cookies are required
+        if not cookies_text and not cookies_file:
+            print("⚠️ WARNING: Running in server environment without cookies!")
+            print("⚠️ YouTube will block requests. Please set YOUTUBE_COOKIES_TEXT environment variable.")
         return cookie_config
     
     # Try to detect available browsers and use their cookies
@@ -1241,6 +1252,37 @@ def get_video_info():
         })
     except Exception as e:
         error_msg = str(e)
+        
+        # Check for bot detection / cookie errors
+        if 'sign in to confirm' in error_msg.lower() or 'you\'re not a bot' in error_msg.lower() or 'cookie' in error_msg.lower():
+            # Check if we're in a server environment
+            is_server = (
+                os.environ.get('RAILWAY_ENVIRONMENT') or 
+                os.environ.get('RAILWAY_PROJECT_ID') or
+                os.path.exists('/.dockerenv') or
+                os.environ.get('DYNO')
+            )
+            
+            if is_server:
+                help_msg = (
+                    "⚠️ YouTube requires cookies to prevent bot detection.\n\n"
+                    "To fix this in Railway:\n"
+                    "1. Export cookies using 'Get cookies.txt LOCALLY' browser extension\n"
+                    "2. In Railway Dashboard → Variables → Add Variable:\n"
+                    "   - Name: YOUTUBE_COOKIES_TEXT\n"
+                    "   - Value: Paste entire contents of cookies.txt\n"
+                    "3. Railway will auto-redeploy\n\n"
+                    "See DEPLOYMENT_GUIDE.md for detailed instructions."
+                )
+                return jsonify({'error': help_msg}), 400
+            else:
+                help_msg = (
+                    "⚠️ YouTube requires cookies. The app tried to use browser cookies but it didn't work.\n\n"
+                    "Try setting YOUTUBE_COOKIES_TEXT environment variable with exported cookies.\n"
+                    "See README.md for instructions."
+                )
+                return jsonify({'error': help_msg}), 400
+        
         if 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower():
             return jsonify({'error': 'Request timed out. The playlist may be too large. Please try downloading directly without fetching formats.'}), 408
         return jsonify({'error': f'Error fetching video info: {error_msg}'}), 400
