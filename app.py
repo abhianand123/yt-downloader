@@ -54,6 +54,8 @@ class YouTubeDownloader:
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -161,8 +163,16 @@ class YouTubeDownloader:
             output_dir = self.temp_dir
         Path(output_dir).mkdir(exist_ok=True)
         
+        # Base options for all downloads
+        base_opts = {
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'progress_hooks': [progress_callback] if progress_callback else [],
+        }
+        
         if audio_only:
             ydl_opts = {
+                **base_opts,
                 'format': 'bestaudio/best',
                 'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
                 'postprocessors': [{
@@ -170,24 +180,23 @@ class YouTubeDownloader:
                     'preferredcodec': 'mp3',
                     'preferredquality': '192',
                 }],
-                'progress_hooks': [progress_callback] if progress_callback else [],
             }
         else:
             if format_id:
                 ydl_opts = {
+                    **base_opts,
                     'format': format_id,
                     'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-                    'progress_hooks': [progress_callback] if progress_callback else [],
                 }
             else:
                 ydl_opts = {
+                    **base_opts,
                     'format': 'bestvideo+bestaudio/best',
                     'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
                     'postprocessors': [{
                         'key': 'FFmpegVideoConvertor',
                         'preferedformat': 'mp4',
                     }],
-                    'progress_hooks': [progress_callback] if progress_callback else [],
                 }
         
         try:
@@ -259,8 +268,16 @@ class YouTubeDownloader:
             output_dir = self.temp_dir
         playlist_dir = os.path.join(output_dir, f"playlist_{playlist_info['playlist_id']}")
         
+        # Base options for all downloads
+        base_opts = {
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'progress_hooks': [progress_callback] if progress_callback else [],
+        }
+        
         if audio_only:
             ydl_opts = {
+                **base_opts,
                 'format': 'bestaudio/best',
                 'outtmpl': os.path.join(playlist_dir, '%(playlist_title)s - %(title)s.%(ext)s'),
                 'postprocessors': [{
@@ -268,24 +285,23 @@ class YouTubeDownloader:
                     'preferredcodec': 'mp3',
                     'preferredquality': '192',
                 }],
-                'progress_hooks': [progress_callback] if progress_callback else [],
             }
         else:
             if format_id:
                 ydl_opts = {
+                    **base_opts,
                     'format': format_id,
                     'outtmpl': os.path.join(playlist_dir, '%(playlist_title)s - %(title)s.%(ext)s'),
-                    'progress_hooks': [progress_callback] if progress_callback else [],
                 }
             else:
                 ydl_opts = {
+                    **base_opts,
                     'format': 'bestvideo+bestaudio/best',
                     'outtmpl': os.path.join(playlist_dir, '%(playlist_title)s - %(title)s.%(ext)s'),
                     'postprocessors': [{
                         'key': 'FFmpegVideoConvertor',
                         'preferedformat': 'mp4',
                     }],
-                    'progress_hooks': [progress_callback] if progress_callback else [],
                 }
         
         try:
