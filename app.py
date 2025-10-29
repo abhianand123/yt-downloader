@@ -116,6 +116,11 @@ def download_media(url, format_choice, status_key, download_dir, format_id=None)
             'noplaylist': False,
             'geo_bypass': True,
             'age_limit': 0,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web']
+                }
+            },
         }
 
         # Create custom progress hook with proper threading
@@ -137,9 +142,10 @@ def download_media(url, format_choice, status_key, download_dir, format_id=None)
             })
         else:  # MP4
             if format_id:
-                # If specific format is selected, merge with audio
+                # If specific format is selected, ensure it has video/audio and merge if needed
+                # Try format_id first, but fallback to best if it fails
                 ydl_opts.update({
-                    'format': f'{format_id}+bestaudio/best',
+                    'format': f'{format_id}/bestvideo+bestaudio/best',
                     'merge_output_format': 'mp4',
                 })
             else:
@@ -968,6 +974,11 @@ def get_video_info():
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web']
+                }
+            },
         }
         
         with YoutubeDL(ydl_opts_flat) as ydl_flat:
@@ -985,6 +996,11 @@ def get_video_info():
                     ydl_opts = {
                         'quiet': True,
                         'no_warnings': True,
+                        'extractor_args': {
+                            'youtube': {
+                                'player_client': ['android', 'web']
+                            }
+                        },
                     }
                     with YoutubeDL(ydl_opts) as ydl:
                         try:
@@ -1004,6 +1020,11 @@ def get_video_info():
             ydl_opts = {
                 'quiet': True,
                 'no_warnings': True,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'web']
+                    }
+                },
             }
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -1012,15 +1033,20 @@ def get_video_info():
         # Process formats (same for both playlist and single video)
         formats = []
         for f in formats_source:
-            if f.get('vcodec') != 'none' or f.get('acodec') != 'none':
+            vcodec = f.get('vcodec', '')
+            acodec = f.get('acodec', '')
+            ext = f.get('ext', 'unknown')
+            
+            # Skip thumbnail/image-only formats
+            if ext.lower() in ['webp', 'jpg', 'jpeg', 'png'] and vcodec == 'none' and acodec == 'none':
+                continue
+            
+            if vcodec != 'none' or acodec != 'none':
                 height = f.get('height')
-                vcodec = f.get('vcodec')
-                acodec = f.get('acodec')
-                ext = f.get('ext', 'unknown')
                 format_id = f.get('format_id')
                 filesize = f.get('filesize', 0)
                 
-                # Skip video-only formats
+                # Skip video-only formats (video without audio)
                 if vcodec != 'none' and acodec == 'none':
                     continue
                 
@@ -1164,4 +1190,5 @@ if __name__ == '__main__':
     os.makedirs('Downloads', exist_ok=True)
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
 
