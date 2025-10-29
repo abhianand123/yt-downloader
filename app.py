@@ -137,12 +137,13 @@ def download_media(url, format_choice, status_key, download_dir, format_id=None)
             })
         else:  # MP4
             if format_id:
-                # Use the selected format and merge with best audio
+                # If specific format is selected, merge with audio
                 ydl_opts.update({
-                    'format': f'{format_id}+bestaudio',
+                    'format': f'{format_id}+bestaudio/best',
                     'merge_output_format': 'mp4',
                 })
             else:
+                # Use best quality with wide compatibility
                 ydl_opts.update({
                     'format': 'bestvideo+bestaudio/best',
                     'merge_output_format': 'mp4',
